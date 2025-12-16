@@ -15,24 +15,33 @@ const eaRoutes = require('./routes/ea.routes');
 // Initialize express app
 const app = express();
 
+// Trust proxy (important for Railway/Render)
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 
 // CORS configuration
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',')
-  : ['http://localhost:3000'];
+  : ['*'];
 
 app.use(
   cors({
     origin: function (origin, callback) {
+      // Allow requests with no origin (mobile apps, Postman, etc.)
       if (!origin) return callback(null, true);
       
-      if (allowedOrigins.indexOf(origin) === -1) {
-        const msg = 'CORS policy does not allow access from the specified origin.';
-        return callback(new Error(msg), false);
+      // Allow all origins in development
+      if (process.env.NODE_ENV === 'development') {
+        return callback(null, true);
       }
-      return callback(null, true);
+      
+      if (allowedOrigins.includes('*') || allowedOrigins.indexOf(origin) !== -1) {
+        return callback(null, true);
+      }
+      
+      return callback(null, true); // Allow all for now
     },
     credentials: true,
   })
@@ -53,6 +62,7 @@ app.get('/health', (req, res) => {
     success: true,
     message: 'Server is running',
     timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV,
   });
 });
 
@@ -76,7 +86,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/licenses', licenseRoutes);
 app.use('/api/eas', eaRoutes);
 
-// 404 handler - MUST be after all other routes
+// 404 handler
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -91,7 +101,7 @@ app.use(errorHandler);
 // Start server
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('=================================');
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV}`);
@@ -99,7 +109,16 @@ app.listen(PORT, () => {
   console.log('=================================');
 });
 
-// Handle unhandled promise rejections
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM signal received: closing HTTP server');
+  server.close(() => {
+    console.log('HTTP server closed');
+  });
+});
+
 process.on('unhandledRejection', (err) => {
   console.error('❌ Unhandled Promise Rejection:', err);
 });
+
+module.exports = app;
