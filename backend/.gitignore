@@ -7,6 +7,12 @@ node_modules/
 .env.production
 .env.example
 
+# Servers
+test-db.js
+test-routes.js
+test-server.js
+backend_schema.sql
+
 # Logs
 logs/
 *.log
