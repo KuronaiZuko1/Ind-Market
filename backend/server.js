@@ -1,180 +1,86 @@
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const morgan = require('morgan');
-require('dotenv').config();
+import 'dotenv/config';
 
-// Import middleware
-const errorHandler = require('./src/middleware/errorHandler');
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import rateLimit from 'express-rate-limit';
 
-// Import routes
-const authRoutes = require('./src/routes/auth.routes');
-const licenseRoutes = require('./src/routes/license.routes');
-const eaRoutes = require('./src/routes/ea.routes');
+import pool from './src/config/database.js';
+import authRoutes from './src/routes/auth.routes.js';
+import licenseRoutes from './src/routes/license.routes.js';
 
 const app = express();
-
-/*
-====================================
-ENVIRONMENT
-====================================
-*/
-const NODE_ENV = process.env.NODE_ENV || 'development';
 const PORT = process.env.PORT || 5000;
 
-/*
-====================================
-TRUST PROXY (ONLY IN PROD)
-====================================
-*/
-if (NODE_ENV === 'production') {
-  app.set('trust proxy', 1);
-}
-
-/*
-====================================
-SECURITY MIDDLEWARE
-====================================
-*/
+/* =======================
+   Global Middleware
+======================= */
 app.use(helmet());
+app.use(cors());
+app.use(express.json());
+app.use(morgan('dev'));
 
-/*
-====================================
-CORS CONFIG (FIXED)
-====================================
-*/
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-  : [];
+/* =======================
+   Rate Limiting
+======================= */
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false
+});
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow server-to-server & browser-less requests
-      if (!origin) return callback(null, true);
+app.use('/auth', authLimiter);
 
-      // Dev mode: allow all
-      if (NODE_ENV === 'development') {
-        return callback(null, true);
-      }
+/* =======================
+   Health Check
+======================= */
+app.get('/health', async (req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.status(200).json({
+      status: 'ok',
+      database: 'connected'
+    });
+  } catch (err) {
+    res.status(500).json({
+      status: 'error',
+      database: 'disconnected'
+    });
+  }
+});
 
-      // Prod: whitelist only
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+/* =======================
+   Routes
+======================= */
+app.use('/auth', authRoutes);
+app.use('/licenses', licenseRoutes);
 
-      return callback(new Error('CORS not allowed'));
-    },
-    credentials: true,
-  })
-);
+/* =======================
+   Global Error Handler
+======================= */
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal Server Error' });
+});
 
-/*
-====================================
-BODY PARSERS
-====================================
-*/
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+/* =======================
+   Server Startup (FAIL-FAST)
+======================= */
+async function startServer() {
+  try {
+    await pool.query('SELECT 1');
+    console.log('🟢 Database connection verified');
 
-/*
-====================================
-LOGGING
-====================================
-*/
-if (NODE_ENV === 'development') {
-  app.use(morgan('dev'));
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+    });
+  } catch (err) {
+    console.error('❌ Database connection failed');
+    console.error(err);
+    process.exit(1);
+  }
 }
 
-/*
-====================================
-HEALTH CHECK
-====================================
-*/
-app.get('/health', (req, res) => {
-  res.json({
-    success: true,
-    message: 'Server is running',
-    environment: NODE_ENV,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-/*
-====================================
-ROOT
-====================================
-*/
-app.get('/', (req, res) => {
-  res.json({
-    success: true,
-    name: 'EA License Manager API',
-    version: '1.0.0',
-  });
-});
-
-/*
-====================================
-API ROUTES
-====================================
-*/
-app.use('/api/auth', authRoutes);
-app.use('/api/licenses', licenseRoutes);
-app.use('/api/eas', eaRoutes);
-
-/*
-====================================
-404 HANDLER
-====================================
-*/
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: 'Route not found',
-    path: req.originalUrl,
-  });
-});
-
-/*
-====================================
-ERROR HANDLER (LAST)
-====================================
-*/
-app.use(errorHandler);
-
-/*
-====================================
-START SERVER
-====================================
-*/
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log('=================================');
-  console.log(`🚀 Server running`);
-  console.log(`🌍 Environment: ${NODE_ENV}`);
-  console.log(`📡 Port: ${PORT}`);
-  console.log('=================================');
-});
-
-/*
-====================================
-GRACEFUL SHUTDOWN
-====================================
-*/
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down...');
-  server.close(() => {
-    console.log('Server closed');
-  });
-});
-
-process.on('unhandledRejection', (err) => {
-  console.error('❌ Unhandled Rejection:', err);
-  server.close(() => process.exit(1));
-});
-
-process.on('uncaughtException', (err) => {
-  console.error('❌ Uncaught Exception:', err);
-  process.exit(1);
-});
-
-module.exports = app;
+startServer();
