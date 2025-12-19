@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+scripts/
 
 # Environment variables
 .env
@@ -11,7 +12,7 @@ node_modules/
 test-db.js
 test-routes.js
 test-server.js
-backend_schema.sql
+database_schema.sql
 
 # Logs
 logs/
